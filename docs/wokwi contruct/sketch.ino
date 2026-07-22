@@ -15,7 +15,11 @@
   ====================================================================
 */
 
-#include <WiFi.h>
+#if defined(ESP8266)
+  #include <ESP8266WiFi.h>
+#else
+  #include <WiFi.h>
+#endif
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <RTClib.h>
