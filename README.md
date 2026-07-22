@@ -1,67 +1,58 @@
-# Digital Clock - Group 1 🕐
+# Smart Digital Clock with Temperature Monitoring (ESP8266) 🕐🌡️
 
-Dự án đồng hồ kỹ thuật số sử dụng Arduino Uno R3 với các tính năng: hiển thị giờ/ngày, chỉnh giờ bằng nút nhấn, và báo thức.
+Hệ thống Đồng Hồ Điện Tử Thông Minh giám sát Nhiệt Độ Môi Trường thời gian thực dựa trên bo mạch **ESP8266 (NodeMCU v2/v3 / Wemos D1 Mini)**, kết nối trực tiếp với Giao Diện Web Dashboard qua công nghệ **Web Serial API**.
 
-## Thành viên nhóm
-| # | Họ tên | Vai trò |
-|:---:|--------|---------|
-| 1 | Nguyễn Trí Thiện | Trưởng nhóm - Kiến trúc & Tích hợp |
-| 2 | Nguyễn Văn An | Chuyên gia RTC (Thời gian thực) |
-| 3 | Hàng Võ Minh Nhật | Chuyên gia LCD (Hiển thị) |
-| 4 | Trần Công Tiến | Chuyên gia Nút nhấn (Tương tác) |
-| 5 | Văn Thái Trung | Chuyên gia Báo thức & QA |
+---
 
-> **Lưu ý**: Thứ tự vai trò có thể thay đổi tùy theo phân công thực tế của nhóm.
+## 🌟 Tính năng nổi bật
 
-## Tính năng
-- ⏰ Hiển thị **Giờ:Phút:Giây** và **Ngày/Tháng/Năm** trên LCD 16x2
-- 🔧 Chỉnh giờ/phút bằng 3 nút nhấn (MODE, UP, DOWN)
-- 🔔 Đặt báo thức (giờ + phút), bật/tắt linh hoạt
-- 🔋 Giữ giờ chính xác khi mất điện (nhờ DS3231 có pin backup)
-- 🚫 Không dùng `delay()` cho debounce (dùng `millis()`)
+### 1. Bo mạch ESP8266 (NodeMCU)
+- ⏰ **Hiển thị Thời Gian Thực**: Đồng bộ chính xác **Giờ : Phút : Giây** và **Ngày / Tháng / Năm** (Module DS3231 / DS1307 RTC).
+- 🌡️ **Đo Nhiệt Độ (°C / °F)**: Đọc liên tục nhiệt độ môi trường từ cảm biến NTC Analog đấu nối trực tiếp vào **Pin A0**.
+- 📡 **Truyền Dữ Liệu Thời Gian Thực**: Phát dữ liệu chuỗi JSON qua cổng Serial với tốc độ `115200 baud`.
 
-## Thiết bị
-| Thiết bị | Số lượng |
-|----------|:--------:|
-| Arduino Uno R3 + cáp USB | 1 |
-| LCD 16x2 I2C | 1 |
-| RTC DS3231 | 1 |
-| Nút nhấn | 3 |
-| Piezo Buzzer | 1 |
-| Breadboard + Jumper wires | 1 bộ |
+### 2. Giao diện Web Dashboard (`digital_clock_simulator.html`)
+- 🔌 **Kết Nối Trực Tiếp Phần Cứng (Web Serial API)**: Cắm cáp USB nối ESP8266 vào máy tính ➔ Bấm *"Kết Nối Hardware ESP8266"* trên trình duyệt Chrome/Edge là Web tự động nhận dữ liệu thời gian thực mà không cần phần mềm trung gian.
+- 🖥️ **Hiển Thị Đồng Hồ Điện Tử Cỡ Lớn**: Đèn nền LCD retro sắc nét (Cyan, Emerald, Amber) với hiệu ứng scanline.
+- 📊 **Đồ Thị Biến Thiên Real-time**: Theo dõi trực quan đồ thị sóng biến thiên Nhiệt độ qua thời gian.
+- 🎛️ **Chế Độ Giả Lập Pin A0 (Simulation Mode)**: Tự động giả lập dữ liệu cảm biến A0 nếu chưa cắm phần cứng thật để test dễ dàng.
 
-## Cấu trúc dự án
+---
+
+## 🔌 Sơ đồ kết nối phần cứng ESP8266 (NodeMCU)
+
 ```
-digital-clock---IOT/
-├── digital_clock/
-│   └── digital_clock.ino    # Code chính (Arduino sketch)
-├── docs/
-│   ├── wiring_and_setup.md  # Sơ đồ kết nối & cài đặt
-│   └── team_assignment.md   # Phân chia code & bảng test
-└── README.md
+        NodeMCU ESP8266                    Thiết Bị / Cảm Biến
+┌───────────────────────────┐       ┌───────────────────────┐
+│ Pin D2 (GPIO 4 - SDA) ────┼───────┤ LCD 16x2 I2C (SDA)    │
+│ Pin D1 (GPIO 5 - SCL) ────┼───────┤ LCD 16x2 I2C (SCL)    │
+│                           │       ├───────────────────────┤
+│ Pin D2 (GPIO 4 - SDA) ────┼───────┤ RTC DS3231 (SDA)      │
+│ Pin D1 (GPIO 5 - SCL) ────┼───────┤ RTC DS3231 (SCL)      │
+│                           │       ├───────────────────────┤
+│ Pin A0 (ADC0) ────────────┼───────┤ Cảm biến NTC Analog   │
+│                           │       ├───────────────────────┤
+│ 3.3V / 5V ────────────────┼───────┤ VCC Linh Kiện         │
+│ GND ──────────────────────┼───────┤ GND Linh Kiện         │
+└───────────────────────────┘       └───────────────────────┘
 ```
 
-## Bắt đầu nhanh
+---
 
-### 1. Cài thư viện (Arduino IDE)
-- `Sketch` → `Include Library` → `Manage Libraries`
-- Tìm & cài: **RTClib** (Adafruit) + **LiquidCrystal I2C** (Frank de Brabander)
+## 🚀 Hướng dẫn khởi động nhanh
 
-### 2. Kết nối phần cứng
-Xem chi tiết: [`docs/wiring_and_setup.md`](docs/wiring_and_setup.md)
+### 1. Nạp code cho ESP8266
+1. Mở file [digital_clock/digital_clock.ino](digital_clock/digital_clock.ino) bằng **Arduino IDE**.
+2. Chọn Bo mạch: **NodeMCU 1.0 (ESP-12E Module)** (hoặc Generic ESP8266 Module).
+3. Chọn đúng cổng **COMx** của bạn.
+4. Nhấn **Upload** (➔).
 
-### 3. Upload code
-- Mở `digital_clock/digital_clock.ino` bằng Arduino IDE
-- Chọn Board: **Arduino Uno**, Port: **COMx**
-- Nhấn **Upload** (→)
+### 2. Mở Giao diện Web Dashboard
+- Nhấp đúp file `startup.bat` để bật server giả lập Web tại `http://localhost:6009/digital_clock_simulator.html`.
+- Hoặc mở trực tiếp file `digital_clock_simulator.html` trên trình duyệt Google Chrome hoặc Microsoft Edge.
 
-### 4. Sử dụng
-| Nút | Chức năng |
-|-----|-----------|
-| **MODE** (D2) | Chuyển chế độ: Xem → Chỉnh Giờ → Chỉnh Phút → Alarm Giờ → Alarm Phút → Xem |
-| **UP** (D3) | Tăng giá trị / Bật-tắt báo thức |
-| **DOWN** (D4) | Giảm giá trị / Bật-tắt báo thức |
-
-## Tài liệu
-- [Sơ đồ kết nối & Hướng dẫn cài đặt](docs/wiring_and_setup.md)
-- [Phân chia code & Bảng kiểm thử](docs/team_assignment.md)
+### 3. Kết nối phần cứng thật trên Web
+1. Cắm cáp USB nối ESP8266 với máy tính.
+2. Trên Web Dashboard, bấm nút **"Kết Nối Hardware ESP8266"** ở góc phải thanh Header.
+3. Chọn cổng COM tương ứng của ESP8266 ➔ Nhấn **Connect**.
+4. Màn hình Web sẽ lập tức nhận dữ liệu Giờ, Ngày, và Nhiệt độ thời gian thực!
