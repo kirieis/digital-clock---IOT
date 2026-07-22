@@ -25,8 +25,8 @@
 #endif
 
 // ------------------- WiFi Config -------------------
-const char* ssid     = "Wokwi-GUEST"; // Thay tên WiFi của bạn
-const char* password = "";             // Thay mật khẩu WiFi
+const char* ssid     = "Yuugito"; // Thay tên WiFi của bạn
+const char* password = "12345678";             // Thay mật khẩu WiFi
 
 // ------------------- ThingsBoard / MQTT Config -------------------
 const char* mqtt_server  = "demo.thingsboard.io";
