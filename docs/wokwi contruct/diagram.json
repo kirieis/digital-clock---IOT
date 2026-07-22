@@ -3,59 +3,192 @@
   "author": "Gemini AI Clean Layout",
   "editor": "wokwi",
   "parts": [
-    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": -38.4, "left": -4.76, "attrs": {} },
-    { "type": "wokwi-breadboard", "id": "bb1", "top": -99, "left": 396.4, "attrs": {} },
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": -52.9,
+      "left": 263.8,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-breadboard",
+      "id": "bb1",
+      "top": -99,
+      "left": 396.4,
+      "attrs": {}
+    },
     {
       "type": "wokwi-lcd1602",
       "id": "lcd1",
-      "top": -340,
-      "left": 450,
-      "attrs": { "pins": "i2c" }
+      "top": -252.8,
+      "left": 495.2,
+      "attrs": {
+        "pins": "i2c"
+      }
     },
-    { "type": "wokwi-ds1307", "id": "rtc1", "top": 234.6, "left": 422.5, "attrs": {} },
+    {
+      "type": "wokwi-ds1307",
+      "id": "rtc1",
+      "top": -91.1,
+      "left": 803.6,
+      "rotate": 270,
+      "attrs": {}
+    },
     {
       "type": "wokwi-resistor",
       "id": "r1",
       "top": 43.2,
       "left": 786.65,
       "rotate": 90,
-      "attrs": { "value": "10000" }
+      "attrs": {
+        "value": "10000"
+      }
     },
     {
       "type": "wokwi-ntc-temperature-sensor",
       "id": "ntc1",
-      "top": 12.2,
-      "left": 873,
-      "attrs": { "temperature": "28" }
+      "top": -141.9,
+      "left": 892.3,
+      "rotate": 90,
+      "attrs": {
+        "temperature": "28"
+      }
     }
   ],
   "connections": [
-    [ "esp:TX", "$serialMonitor:RX", "", [] ],
-    [ "esp:RX", "$serialMonitor:TX", "", [] ],
-    [ "esp:5V", "bb1:tp.1", "red", [ "v20", "h360" ] ],
-    [ "esp:GND.1", "bb1:tn.1", "cyan", [ "h-28.65", "v40", "h422.4", "v-231.9" ] ],
-    [ "bb1:tp.2", "bb1:bp.2", "red", [ "v0" ] ],
-    [ "bb1:tn.2", "bb1:bn.2", "black", [ "h28", "v174" ] ],
-    [ "lcd1:VCC", "bb1:tp.8", "red", [ "v-20", "h-60" ] ],
-    [ "lcd1:GND", "bb1:tn.8", "black", [ "v-10", "h-60" ] ],
-    [ "lcd1:SDA", "esp:21", "green", [ "v-40", "h-281.2", "v367.4", "h-76.8" ] ],
-    [ "lcd1:SCL", "esp:22", "orange", [ "v1.1", "h-242.8", "v240", "h-115.2" ] ],
-    [ "rtc1:5V", "bb1:bp.15", "red", [ "h124.8", "v-0.4", "h39.2" ] ],
-    [ "rtc1:GND", "bb1:bn.15", "black", [ "h-57.6", "v76.8", "h259.2", "v-229.1" ] ],
-    [ "rtc1:SDA", "bb1:15t.a", "yellow", [ "v-0.3", "h96", "v-326.4", "h28.8" ] ],
-    [ "rtc1:SCL", "bb1:16t.a", "orange", [ "h48", "v30", "h105.6", "v-375.8", "h-19.2" ] ],
-    [ "esp:21", "bb1:15t.e", "yellow", [ "h9.6", "v68.8", "h451.2" ] ],
-    [ "esp:22", "bb1:16t.e", "purple", [ "h19.2", "v49.6", "h489.6", "v-68.8" ] ],
-    [ "ntc1:VCC", "bb1:bp.28", "red", [ "h86.4", "v40", "h-344.8" ] ],
-    [ "ntc1:GND", "bb1:bn.28", "black", [ "h27.4", "v96", "h-286.6", "v-37.1" ] ],
-    [ "ntc1:OUT", "bb1:28t.a", "magenta", [ "h46.6", "v-250.9", "h-326.4" ] ],
-    [ "r1:1", "bb1:28t.c", "magenta", [ "v0" ] ],
-    [ "r1:2", "bb1:30t.a", "limegreen", [ "h28.8", "v-116.4" ] ],
-    [ "esp:34", "bb1:30t.e", "green", [ "h-47.85", "v96", "h748.8" ] ],
-    [ "r1:1", "bb1:42b.f", "", [ "$bb" ] ],
-    [ "ntc1:GND", "bb1:62b.h", "", [ "$bb" ] ],
-    [ "ntc1:VCC", "bb1:62b.i", "", [ "$bb" ] ],
-    [ "ntc1:OUT", "bb1:62b.j", "", [ "$bb" ] ]
+    [
+      "esp:TX",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "esp:5V",
+      "bb1:tp.1",
+      "red",
+      [
+        "v20",
+        "h360"
+      ]
+    ],
+    [
+      "lcd1:SDA",
+      "esp:21",
+      "blue",
+      [
+        "v-40",
+        "h-281.2",
+        "v367.4",
+        "h-76.8"
+      ]
+    ],
+    [
+      "lcd1:SCL",
+      "esp:22",
+      "yellow",
+      [
+        "v1.1",
+        "h-242.8",
+        "v240",
+        "h-115.2"
+      ]
+    ],
+    [
+      "rtc1:SDA",
+      "esp:21",
+      "blue",
+      []
+    ],
+    [
+      "rtc1:SCL",
+      "esp:22",
+      "yellow",
+      []
+    ],
+    [
+      "esp:34",
+      "bb1:28t.e",
+      "green",
+      []
+    ],
+    [
+      "r1:1",
+      "bb1:42b.f",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "ntc1:GND",
+      "bb1:58t.b",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "ntc1:VCC",
+      "bb1:57t.b",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "ntc1:OUT",
+      "bb1:56t.b",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "rtc1:GND",
+      "bb1:43t.e",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "rtc1:5V",
+      "bb1:44t.e",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "rtc1:SDA",
+      "bb1:45t.e",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "rtc1:SCL",
+      "bb1:46t.e",
+      "",
+      [
+        "$bb"
+      ]
+    ],
+    [
+      "rtc1:SQW",
+      "bb1:47t.e",
+      "",
+      [
+        "$bb"
+      ]
+    ]
   ],
   "dependencies": {}
 }
