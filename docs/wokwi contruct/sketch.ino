@@ -1,31 +1,34 @@
 /*
   ====================================================================
-  IoT Digital Clock — ESP32  (v3 — NTC Analog Sensor)
+  IoT Digital Clock — ESP8266 (Tương thích mọi bo mạch ESP8266)
   --------------------------------------------------------------------
-  Hardware:
-    - ESP32 DevKit C v4
-    - LCD1602 I2C (0x27)  — hien thi gio & nhiet do
-    - DS1307 RTC (I2C)    — luu gio du phong
-    - NTC Temperature Sensor (analog) tren GPIO34 qua dien tro 10k
-  Chuc nang:
-    - Dong bo gio thuc tu NTP, cap nhat DS1307
-    - Doc nhiet do tu cam bien NTC qua ADC
-    - Gui telemetry (nhiet do + gio) len ThingsBoard qua MQTT
+  Sơ đồ chân ESP8266:
+    - LCD1602 I2C (0x27)  — SDA: GPIO4 (NodeMCU D2), SCL: GPIO5 (NodeMCU D1)
+    - DS1307 RTC (I2C)    — SDA: GPIO4 (NodeMCU D2), SCL: GPIO5 (NodeMCU D1)
+    - NTC Sensor (Analog) — VCC (3.3V), GND, OUT -> Pin A0
   ====================================================================
 */
 
-#include <WiFi.h>
+#include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 
-// ------------------- WiFi -------------------
-const char* ssid     = "Wokwi-GUEST";
-const char* password = "";
+// Định nghĩa chân I2C tương thích cả NodeMCU lẫn Generic ESP8266
+#ifndef D2
+  #define D2 4  // GPIO4 (SDA)
+#endif
+#ifndef D1
+  #define D1 5  // GPIO5 (SCL)
+#endif
 
-// ------------------- ThingsBoard / MQTT -------------------
+// ------------------- WiFi Config -------------------
+const char* ssid     = "Wokwi-GUEST"; // Thay tên WiFi của bạn
+const char* password = "";             // Thay mật khẩu WiFi
+
+// ------------------- ThingsBoard / MQTT Config -------------------
 const char* mqtt_server  = "demo.thingsboard.io";
 const int   mqtt_port    = 1883;
 const char* device_token = "exzBQwFLEN6mbWHMCGh9";
@@ -34,9 +37,9 @@ const char* mqtt_topic   = "v1/devices/me/telemetry";
 WiFiClient   espClient;
 PubSubClient client(espClient);
 
-// ------------------- NTP -------------------
+// ------------------- NTP Config -------------------
 const char* ntpServer          = "pool.ntp.org";
-const long  gmtOffset_sec      = 7 * 3600;   // GMT+7 (Viet Nam)
+const long  gmtOffset_sec      = 7 * 3600;   // GMT+7 (Việt Nam)
 const int   daylightOffset_sec = 0;
 
 // ------------------- LCD I2C (0x27, 16x2) -------------------
@@ -44,123 +47,150 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // ------------------- RTC DS1307 -------------------
 RTC_DS1307 rtc;
+bool rtcFound = false;
 
 // ------------------- NTC Temperature Sensor -------------------
-// Mach chia ap: 3.3V ─── R_FIXED(10kΩ) ─── GPIO34 ─── NTC ─── GND
-// Khi nhiet do tang, dien tro NTC giam, dien ap tai GPIO34 giam.
-const int   ADC_PIN    = 34;       // GPIO34 (input-only ADC pin)
-const float VCC_MV     = 3300.0f; // 3.3 V tinh theo mV
-const float ADC_RES    = 4095.0f; // 12-bit ADC (0-4095)
-const float R_FIXED    = 10000.0f; // Dien tro co dinh 10 kΩ
-const float NTC_R0     = 10000.0f; // Dien tro NTC tai 25°C = 10 kΩ
-const float NTC_BETA   = 3950.0f;  // He so Beta (B25/85) cua NTC
-const float KELVIN     = 273.15f;
-const float T0_KELVIN  = 25.0f + KELVIN;  // 25°C tinh theo Kelvin
+const int   ADC_PIN        = A0;       // Chân Analog A0 của ESP8266
+const float VCC_SENSOR     = 3.3f;     // NTC VCC (3.3V)
+const float ADC_VREF       = 3.3f;     // NodeMCU A0 max input 3.3V
+const float ADC_RES        = 1023.0f;  // ESP8266 ADC 10-bit (0 - 1023)
+const float NTC_R0         = 10000.0f; // NTC 10kΩ ở 25°C
+const float NTC_BETA       = 3950.0f;  // System Beta
+const float KELVIN_OFFSET  = 273.15f;
+const float T0_KELVIN      = 25.0f + KELVIN_OFFSET;
 
-// Cache gia tri cam bien
+// Cache nhiệt độ
 float lastTemperature = NAN;
 
-// ------------------- Timing -------------------
+// ------------------- Timing Settings -------------------
 unsigned long lastPublish    = 0;
-const unsigned long PUBLISH_INTERVAL = 10000UL;   // 10s
-
+const unsigned long PUBLISH_INTERVAL = 10000UL;   // 10 giây
 unsigned long lastLcdUpdate  = 0;
-const unsigned long LCD_INTERVAL     = 1000UL;    // 1s
-
+const unsigned long LCD_INTERVAL     = 1000UL;    // 1 giây
 unsigned long lastSensorRead = 0;
-const unsigned long SENSOR_INTERVAL  = 2000UL;    // 2s
+const unsigned long SENSOR_INTERVAL  = 2000UL;    // 2 giây
 
 // ===========================================================
-// Doc nhiet do tu NTC qua cong thuc Steinhart-Hart (phuong
-// trinh Beta): 1/T = 1/T0 + (1/B) * ln(R/R0)
+// Đọc nhiệt độ NTC
 // ===========================================================
 float readNtcTemperature() {
-  int raw = analogRead(ADC_PIN);
-  if (raw <= 0 || raw >= (int)ADC_RES) {
-    return NAN; // Tranh chia cho 0
+  long sumRaw = 0;
+  const int samples = 5;
+  for (int i = 0; i < samples; i++) {
+    sumRaw += analogRead(ADC_PIN);
+    delay(2);
+  }
+  float raw = (float)sumRaw / samples;
+
+  if (raw <= 0.0f || raw >= ADC_RES) {
+    return NAN;
   }
 
-  // Tinh dien ap tai ADC pin (mV)
-  float vAdc_mV = (raw / ADC_RES) * VCC_MV;
+  float vAdc = (raw / ADC_RES) * ADC_VREF;
+  if (vAdc <= 0.01f || vAdc >= VCC_SENSOR - 0.01f) {
+    return NAN;
+  }
 
-  // Tinh dien tro NTC: R_NTC = R_FIXED * V_adc / (VCC - V_adc)
-  // (NTC o phia duoi, R_FIXED o phia tren)
-  float rNtc = R_FIXED * vAdc_mV / (VCC_MV - vAdc_mV);
+  float rNtc = 10000.0f * (VCC_SENSOR / vAdc - 1.0f);
+  if (rNtc <= 0.0f) return NAN;
 
-  // Steinhart-Hart (Beta equation):
   float tempK = 1.0f / (1.0f / T0_KELVIN + (1.0f / NTC_BETA) * log(rNtc / NTC_R0));
-  float tempC = tempK - KELVIN;
+  float tempC = tempK - KELVIN_OFFSET;
 
-  // Loc gia tri phi thuc te
   if (tempC < -40.0f || tempC > 125.0f) return NAN;
   return tempC;
 }
 
 // ===========================================================
+// Kết nối WiFi
+// ===========================================================
 void setup_wifi() {
-  Serial.print("Connecting to WiFi");
+  Serial.print("[WiFi] Dang ket noi toi ");
+  Serial.println(ssid);
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 20) {
+    delay(250);
     Serial.print(".");
+    retries++;
   }
   Serial.println();
-  Serial.print("Connected, IP: ");
-  Serial.println(WiFi.localIP());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[WiFi] Da ket noi! IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("[WiFi] Ket noi WiFi That bai. Van chay dong ho offline tu RTC.");
+  }
 }
 
 // ===========================================================
+// Kết nối ThingsBoard MQTT
+// ===========================================================
 void reconnectMQTT() {
-  while (!client.connected()) {
-    Serial.print("Connecting to ThingsBoard MQTT...");
-    if (client.connect("ESP32DigitalClock", device_token, NULL)) {
-      Serial.println("connected");
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  if (!client.connected()) {
+    Serial.print("[MQTT] Dang ket noi ThingsBoard...");
+    if (client.connect("ESP8266DigitalClock", device_token, NULL)) {
+      Serial.println(" Thanh cong!");
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" — retry in 5s");
-      delay(5000);
+      Serial.print(" That bai, rc=");
+      Serial.println(client.state());
     }
   }
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  // Xu ly lenh tu ThingsBoard (neu can)
-}
+void callback(char* topic, byte* payload, unsigned int length) {}
 
 // ===========================================================
+// Đồng bộ thời gian từ NTP -> RTC DS1307
+// ===========================================================
 void syncTimeFromNTP() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  Serial.println("Syncing time with NTP...");
+  if (WiFi.status() != WL_CONNECTED) return;
 
-  struct tm timeinfo;
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("[NTP] Dang dong bo thoi gian tu NTP...");
+
+  time_t nowSec = time(nullptr);
   int retry = 0;
-  while (!getLocalTime(&timeinfo) && retry < 10) {
-    Serial.println("Waiting for NTP sync...");
-    delay(1000);
+  while (nowSec < 8 * 3600 * 24L && retry < 15) {
+    delay(500);
+    nowSec = time(nullptr);
     retry++;
   }
 
-  if (getLocalTime(&timeinfo)) {
-    rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1,
-                        timeinfo.tm_mday, timeinfo.tm_hour,
-                        timeinfo.tm_min,  timeinfo.tm_sec));
-    Serial.println("Time synced and RTC updated.");
+  if (nowSec >= 8 * 3600 * 24L) {
+    struct tm* timeinfo = localtime(&nowSec);
+    Serial.printf("[NTP] Dong bo thanh cong: %02d:%02d:%02d %02d/%02d/%04d\n",
+                  timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+                  timeinfo->tm_mday, timeinfo->tm_mon + 1, timeinfo->tm_year + 1900);
+
+    if (rtcFound) {
+      rtc.adjust(DateTime(timeinfo->tm_year + 1900, timeinfo->tm_mon + 1,
+                          timeinfo->tm_mday, timeinfo->tm_hour,
+                          timeinfo->tm_min,  timeinfo->tm_sec));
+      Serial.println("[RTC] Da cap nhat thoi gian NTP vao DS1307 RTC.");
+    }
   } else {
-    Serial.println("NTP sync failed — using RTC time.");
+    Serial.println("[NTP] Dong bo failing — dung gio hien tai cua RTC.");
   }
 }
 
+// ===========================================================
+// Setup
 // ===========================================================
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.println("\n=== IoT Digital Clock (ESP8266) ===");
 
-  // I2C bus (SDA=21, SCL=22)
-  Wire.begin(21, 22);
+  // 1. Khởi tạo I2C Bus duy nhất cho LCD & RTC (GPIO4 & GPIO5)
+  Wire.begin(D2, D1);
   delay(100);
 
-  // LCD
+  // 2. Khởi tạo LCD1602
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
@@ -168,117 +198,131 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("  Khoi dong...  ");
 
-  // RTC
-  if (!rtc.begin()) {
-    Serial.println("[ERROR] Khong tim thay DS1307!");
+  // 3. Khởi tạo RTC DS1307 trên I2C chung
+  if (!rtc.begin(&Wire)) {
+    Serial.println("[ERROR] Khong tim thay RTC DS1307 tren I2C!");
+    rtcFound = false;
   } else {
-    Serial.println("RTC OK.");
+    rtcFound = true;
+    Serial.println("[RTC] DS1307 khoi tao thanh cong tren I2C.");
     if (!rtc.isrunning()) {
+      Serial.println("[RTC] DS1307 dang dung, khoi tao lai thoi gian bien dich...");
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
   }
 
-  // ADC
-  analogReadResolution(12);   // 12-bit: 0-4095
-  // Ghi chu: trong Wokwi, dai dien ap ADC mac dinh la 0-3.3V (11dB)
-  Serial.println("NTC sensor on GPIO34 ready.");
-
-  // WiFi + NTP
+  // 4. Wi-Fi & NTP
   setup_wifi();
   syncTimeFromNTP();
 
-  // MQTT
+  // 5. MQTT Client setup
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 
   lcd.clear();
-  Serial.println("System ready.");
+  Serial.println("[SYSTEM] He thong ESP8266 san sang chay.");
 }
 
 // ===========================================================
+// Hiển thị LCD
+// ===========================================================
 void updateLCD(const DateTime& now, float temperature) {
-  // Dong 0: HH:MM:SS  DD/MM/YY
   char line0[17];
-  snprintf(line0, sizeof(line0), "%02d:%02d:%02d %02d/%02d",
+  snprintf(line0, sizeof(line0), "%02d:%02d:%02d  %02d/%02d",
            now.hour(), now.minute(), now.second(),
            now.day(), now.month());
   lcd.setCursor(0, 0);
   lcd.print(line0);
 
-  // Dong 1: Nhiet do
   lcd.setCursor(0, 1);
   if (isnan(temperature)) {
-    lcd.print("Nhiet do: ---   ");
+    lcd.print("Nhiet: ---      ");
   } else {
     char line1[17];
-    // Ky tu 0xDF = ° tren LCD ROM A00
-    snprintf(line1, sizeof(line1), "Nhiet: %5.1f%cC  ", temperature, (char)223);
+    snprintf(line1, sizeof(line1), "Nhiet: %5.1f%cC   ", temperature, (char)223);
     lcd.print(line1);
   }
 }
 
 // ===========================================================
+// Gửi MQTT Telemetry
+// ===========================================================
 void publishTelemetry(const DateTime& now, float temperature) {
-  if (isnan(temperature)) {
-    Serial.println("[MQTT] Skip — nhiet do khong hop le.");
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!client.connected()) return;
 
   char payload[128];
-  snprintf(payload, sizeof(payload),
-           "{\"temperature\":%.1f,\"time\":\"%02d:%02d:%02d\",\"date\":\"%02d/%02d/%04d\"}",
-           temperature,
-           now.hour(), now.minute(), now.second(),
-           now.day(),  now.month(),  now.year());
+  if (isnan(temperature)) {
+    snprintf(payload, sizeof(payload),
+             "{\"time\":\"%02d:%02d:%02d\",\"date\":\"%02d/%02d/%04d\"}",
+             now.hour(), now.minute(), now.second(),
+             now.day(),  now.month(),  now.year());
+  } else {
+    snprintf(payload, sizeof(payload),
+             "{\"temperature\":%.1f,\"time\":\"%02d:%02d:%02d\",\"date\":\"%02d/%02d/%04d\"}",
+             temperature,
+             now.hour(), now.minute(), now.second(),
+             now.day(),  now.month(),  now.year());
+  }
 
   if (client.publish(mqtt_topic, payload)) {
-    Serial.print("[MQTT] Published: ");
+    Serial.print("[MQTT] Telemetry: ");
     Serial.println(payload);
   } else {
-    Serial.println("[MQTT] Publish failed.");
+    Serial.println("[MQTT] Telemetry gui that bai.");
   }
 }
 
 // ===========================================================
+// Loop
+// ===========================================================
 void loop() {
-  // Giu ket noi WiFi
-  if (WiFi.status() != WL_CONNECTED) {
-    setup_wifi();
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      reconnectMQTT();
+    }
+    client.loop();
   }
-
-  // Giu ket noi MQTT
-  if (!client.connected()) {
-    reconnectMQTT();
-  }
-  client.loop();
 
   unsigned long nowMs = millis();
 
-  // Doc cam bien NTC moi 2s
+  // Đọc NTC sensor (mỗi 2s)
   if (nowMs - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = nowMs;
     float t = readNtcTemperature();
     if (!isnan(t)) {
       lastTemperature = t;
-      Serial.print("[NTC] Nhiet do: ");
-      Serial.print(t, 1);
-      Serial.println(" C");
-    } else {
-      Serial.println("[NTC] Doc that bai hoac ngoai dai.");
+      Serial.printf("[NTC] Nhiet do: %.1f C\n", t);
     }
   }
 
-  // Cap nhat LCD moi 1s
+  // Cập nhật LCD (mỗi 1s)
   if (nowMs - lastLcdUpdate >= LCD_INTERVAL) {
     lastLcdUpdate = nowMs;
-    DateTime now = rtc.now();
+    DateTime now;
+    if (rtcFound) {
+      now = rtc.now();
+    } else {
+      time_t tNow = time(nullptr);
+      struct tm* tmInfo = localtime(&tNow);
+      now = DateTime(tmInfo->tm_year + 1900, tmInfo->tm_mon + 1, tmInfo->tm_mday,
+                     tmInfo->tm_hour, tmInfo->tm_min, tmInfo->tm_sec);
+    }
     updateLCD(now, lastTemperature);
   }
 
-  // Gui MQTT moi 10s
+  // Gửi Telemetry (mỗi 10s)
   if (nowMs - lastPublish >= PUBLISH_INTERVAL) {
     lastPublish = nowMs;
-    DateTime now = rtc.now();
+    DateTime now;
+    if (rtcFound) {
+      now = rtc.now();
+    } else {
+      time_t tNow = time(nullptr);
+      struct tm* tmInfo = localtime(&tNow);
+      now = DateTime(tmInfo->tm_year + 1900, tmInfo->tm_mon + 1, tmInfo->tm_mday,
+                     tmInfo->tm_hour, tmInfo->tm_min, tmInfo->tm_sec);
+    }
     publishTelemetry(now, lastTemperature);
   }
 }
