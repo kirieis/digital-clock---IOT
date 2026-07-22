@@ -1,32 +1,20 @@
 /*
   ====================================================================
-  IoT Digital Clock — ESP8266 (Tương thích mọi bo mạch ESP8266)
+  IoT Digital Clock — ESP32 DevKit V1
   --------------------------------------------------------------------
-  Sơ đồ chân ESP8266:
-    - LCD1602 I2C (0x27)  — SDA: GPIO4 (NodeMCU D2), SCL: GPIO5 (NodeMCU D1)
-    - DS1307 RTC (I2C)    — SDA: GPIO4 (NodeMCU D2), SCL: GPIO5 (NodeMCU D1)
-    - NTC Sensor (Analog) — VCC (3.3V), GND, OUT -> Pin A0
+  Sơ đồ chân ESP32 (đúng với diagram.json đã đấu):
+    - LCD1602 I2C (0x27)  — SDA: GPIO21, SCL: GPIO22, VCC: 3V3, GND: GND
+    - DS1307 RTC (I2C)    — SDA: GPIO21, SCL: GPIO22, VCC: 3V3, GND: GND
+    - NTC Sensor (Analog) — VCC: 3V3, GND: GND, OUT -> GPIO34 (ADC1_CH6)
   ====================================================================
 */
 
-#if defined(ESP8266)
-  #include <ESP8266WiFi.h>
-#else
-  #include <WiFi.h>
-#endif
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
-
-// Định nghĩa chân I2C tương thích cả NodeMCU lẫn Generic ESP8266
-#ifndef D2
-  #define D2 4  // GPIO4 (SDA)
-#endif
-#ifndef D1
-  #define D1 5  // GPIO5 (SCL)
-#endif
 
 // ------------------- WiFi Config -------------------
 const char* ssid     = "Yuugito"; // Thay tên WiFi của bạn
@@ -54,10 +42,10 @@ RTC_DS1307 rtc;
 bool rtcFound = false;
 
 // ------------------- NTC Temperature Sensor -------------------
-const int   ADC_PIN        = A0;       // Chân Analog A0 của ESP8266
+const int   ADC_PIN        = 34;       // GPIO34 (ADC1_CH6) - chân input-only trên ESP32
 const float VCC_SENSOR     = 3.3f;     // NTC VCC (3.3V)
-const float ADC_VREF       = 3.3f;     // NodeMCU A0 max input 3.3V
-const float ADC_RES        = 1023.0f;  // ESP8266 ADC 10-bit (0 - 1023)
+const float ADC_VREF       = 3.3f;     // ESP32 ADC full-scale ~3.3V
+const float ADC_RES        = 4095.0f;  // ESP32 ADC 12-bit (0 - 4095)
 const float NTC_R0         = 10000.0f; // NTC 10kΩ ở 25°C
 const float NTC_BETA       = 3950.0f;  // System Beta
 const float KELVIN_OFFSET  = 273.15f;
@@ -137,7 +125,7 @@ void reconnectMQTT() {
 
   if (!client.connected()) {
     Serial.print("[MQTT] Dang ket noi ThingsBoard...");
-    if (client.connect("ESP8266DigitalClock", device_token, NULL)) {
+    if (client.connect("ESP32DigitalClock", device_token, NULL)) {
       Serial.println(" Thanh cong!");
     } else {
       Serial.print(" That bai, rc=");
@@ -188,10 +176,10 @@ void syncTimeFromNTP() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n=== IoT Digital Clock (ESP8266) ===");
+  Serial.println("\n=== IoT Digital Clock (ESP32) ===");
 
-  // 1. Khởi tạo I2C Bus duy nhất cho LCD & RTC (GPIO4 & GPIO5)
-  Wire.begin(D2, D1);
+  // 1. Khởi tạo I2C Bus duy nhất cho LCD & RTC (mặc định ESP32: SDA=GPIO21, SCL=GPIO22)
+  Wire.begin();
   delay(100);
 
   // 2. Khởi tạo LCD1602
@@ -224,7 +212,7 @@ void setup() {
   client.setCallback(callback);
 
   lcd.clear();
-  Serial.println("[SYSTEM] He thong ESP8266 san sang chay.");
+  Serial.println("[SYSTEM] He thong ESP32 san sang chay.");
 }
 
 // ===========================================================
