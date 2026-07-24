@@ -97,7 +97,9 @@
   
   <!-- Babel Standalone -->
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.20/babel.min.js" crossorigin="anonymous" onerror="handleScriptError('Babel Standalone', this.src)"></script>
-  
+  <!-- Face-API.js (Face Recognition & Anti-Theft) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.min.js" crossorigin="anonymous" onerror="handleScriptError('Face-API.js', this.src)"></script>
+
   <!-- Framer Motion UMD -->
   <script src="https://cdn.jsdelivr.net/npm/framer-motion@10.16.4/dist/framer-motion.js" crossorigin="anonymous" onerror="handleScriptError('Framer Motion UMD', this.src)"></script>
 
@@ -222,6 +224,12 @@
       </svg>
     );
 
+    const IconActivity = ({ className = "w-5 h-5" }) => (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    );
+
     // --- Main Application Component ---
     function App() {
       // Connection & Hardware State
@@ -237,6 +245,29 @@
       const [motionState, setMotionState] = useState(1); // 1: Present at desk, 0: Absent
       const [unit, setUnit] = useState('C'); // 'C' | 'F'
       const lastHardwareTimeRef = useRef(0);
+
+      // FaceID & Anti-Theft States
+      const [faceNameInput, setFaceNameInput] = useState('Chủ Nhân');
+      const [isRegistering, setIsRegistering] = useState(false);
+      const [faceDBSize, setFaceDBSize] = useState(0);
+      const [antiTheftMode, setAntiTheftMode] = useState(false);
+      const isAlarmingRef = useRef(false);
+      const currentFaceLabelRef = useRef('NONE');
+      
+      const [isFaceAdminAuthenticated, setIsFaceAdminAuthenticated] = useState(false);
+      const [pinInput, setPinInput] = useState('');
+      const [faceDBList, setFaceDBList] = useState([]);
+
+      useEffect(() => {
+        const saved = localStorage.getItem('smartDeskFaceDB');
+        if (saved) {
+          try { 
+            const parsed = JSON.parse(saved);
+            setFaceDBSize(parsed.length);
+            setFaceDBList(parsed.map(item => item.label));
+          } catch(e){}
+        }
+      }, []);
 
       // --- STUDY METHODS / PRESETS (PROFESSIONAL & ACADEMIC) ---
       const FOCUS_METHODS = [
@@ -300,14 +331,32 @@
       const [simTemp, setSimTemp] = useState(28.2);
       const [simMotion, setSimMotion] = useState(1);
 
+      // Webcam PIR State & Refs
+      const [useWebcamPIR, setUseWebcamPIR] = useState(true);
+      const videoRef = useRef(null);
+      const canvasRef = useRef(null);
+      const prevFrameDataRef = useRef(null);
+      const lastWebcamMotionTimeRef = useRef(Date.now());
+      const webcamIntervalRef = useRef(null);
+
       // Speech Recognition Ref
       const recognitionRef = useRef(null);
 
       // Voice TTS Function (Speak Vietnamese)
       const speakVietnamese = (text) => {
         if (!('speechSynthesis' in window)) return;
+        
+        // Làm mượt từ ngữ tiếng Anh/Icon để giọng đọc Tiếng Việt dễ đọc hơn
+        let cleanText = text
+          .replace(/🍅|⚡|📚|🧪|🧘|🌊/g, '')
+          .replace(/Pomodoro/ig, 'Pô mô đô rô')
+          .replace(/Animedoro/ig, 'A ni mê đô rô')
+          .replace(/Protocol/ig, 'Prô tô côn')
+          .replace(/Deep Work/ig, 'Đíp uốc')
+          .replace(/Flow/ig, 'Phờ lâu');
+
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
+        const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.lang = 'vi-VN';
         utterance.rate = 1.0;
         utterance.pitch = 1.0;
@@ -514,64 +563,70 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
                 return prev > 0 ? prev - 1 : 0;
               });
 
-              // XỬ LÝ EDGE CASE ĐI VẮNG THÔNG MINH (3 CẤP ĐỘ)
-              if (motionState === 0) {
+              // XỬ LÝ EDGE CASE ĐI VẮNG THÔNG MINH (Tích hợp FaceID)
+              const isOwner = currentFaceLabelRef.current === 'Chủ Nhân';
+              const isGuest = currentFaceLabelRef.current === 'KHÁCH LẠ (Guest)';
+              
+              if (motionState === 0 || (!isOwner && motionState === 1)) {
+                // Đang vắng mặt HOẶC có người ngồi nhưng KHÔNG PHẢI CHỦ NHÂN
                 setAbsenceSeconds(prev => {
                   const nextVal = prev + 1;
 
-                  // Cấp độ 1: Rời bàn ngắn (15 giây) ➔ Nhắc nhẹ nhàng
-                  if (nextVal === 15) {
-                    const alertMsg = "Bro đi lấy nước hay đi đâu đấy? Nhớ quay lại bàn học sớm nhé!";
-                    setAiResponseText(alertMsg);
-                    speakVietnamese(alertMsg);
-                    addLog('info', '💬 [AI Agent] Nhắc nhở rời bàn ngắn (15s).');
+                  if (studyPhase === 'FOCUS') {
+                    if (nextVal === 15 && motionState === 0) {
+                      const alertMsg = "Bro đi lấy nước hay đi đâu đấy? Nhớ quay lại bàn học sớm nhé!";
+                      setAiResponseText(alertMsg);
+                      speakVietnamese(alertMsg);
+                      addLog('info', '💬 [AI Agent] Nhắc nhở rời bàn ngắn (15s).');
+                    }
+                    else if (nextVal === 180) { // Đi vắng > 3 phút
+                      setStudyPhase('PAUSED_AFK');
+                      const pauseMsg = "Chủ nhân đã rời bàn. AI tự động tạm dừng đồng hồ học tập!";
+                      setAiResponseText(pauseMsg);
+                      speakVietnamese(pauseMsg);
+                      addLog('error', '⏸️ [AI Agent] Tự động TẠM DỪNG do vắng mặt.');
+                    }
+                    // Nếu người lạ/người quen khác ngồi vào lúc đang FOCUS (trước khi 3 phút trôi qua)
+                    else if (motionState === 1 && nextVal % 10 === 0) {
+                      const warnMsg = isGuest ? "Khu vực này đang trong phiên làm việc bảo mật. Vui lòng rời đi." : `Xin chào ${currentFaceLabelRef.current}, Chủ nhân đang đi vắng, vui lòng không làm phiền khu vực làm việc.`;
+                      setAiResponseText(warnMsg);
+                      speakVietnamese(warnMsg);
+                    }
                   }
                   
-                  // Cấp độ 2: Đi vắng vừa (3 phút / 180s) ➔ Tự động PAUSED_AFK (Đóng băng giờ học, không hét loa)
-                  else if (nextVal === 180) {
-                    setStudyPhase('PAUSED_AFK');
-                    const pauseMsg = "Bro đã rời bàn hơn 3 phút. AI tự động tạm dừng đồng hồ học tập để chờ bro quay lại!";
-                    setAiResponseText(pauseMsg);
-                    speakVietnamese(pauseMsg);
-                    addLog('error', '⏸️ [AI Agent] Tự động TẠM DỪNG (AFK > 3m). Đóng băng đếm ngược.');
+                  if (studyPhase === 'PAUSED_AFK') {
+                    if (nextVal >= 900) { // Vắng > 15 phút
+                      switchMode('NORMAL');
+                      const cancelMsg = "Đi vắng quá lâu, AI tự động đóng phiên học.";
+                      setAiResponseText(cancelMsg);
+                      speakVietnamese(cancelMsg);
+                      addLog('error', '🛑 [AI Agent] HỦY phiên học do đi vắng > 15 phút.');
+                      return 0;
+                    }
+                    // Nếu đang PAUSE mà có người lạ/người nhà mò vào
+                    if (motionState === 1 && nextVal % 15 === 0) {
+                      const warnMsg = isGuest ? "Cảnh báo, khu vực đang làm việc. Vui lòng rời đi!" : `Xin chào ${currentFaceLabelRef.current}, vui lòng không nghịch máy của Chủ Nhân.`;
+                      setAiResponseText(warnMsg);
+                      speakVietnamese(warnMsg);
+                    }
                   }
 
                   return nextVal;
                 });
-              } else {
-                setAbsenceSeconds(0);
-              }
-
-            } else if (studyPhase === 'PAUSED_AFK') {
-              // --- CẤP ĐỘ 2: ĐANG TẠM DỪNG AFK ---
-              setAbsenceSeconds(prev => {
-                const nextVal = prev + 1;
-                
-                // Cấp độ 3: Đi vắng quá lâu (> 15 phút / 900s) ➔ Tự động Hủy phiên về NORMAL
-                if (nextVal >= 900) {
-                  switchMode('NORMAL');
-                  const cancelMsg = "Bro đi vắng hơn 15 phút nên AI đã tự động đóng phiên học. Khi nào sẵn sàng thì bật lại nhé!";
-                  setAiResponseText(cancelMsg);
-                  speakVietnamese(cancelMsg);
-                  addLog('error', '🛑 [AI Agent] Tự động HỦY phiên học do đi vắng quá 15 phút.');
-                  return 0;
+              } else if (motionState === 1 && isOwner) {
+                // CHỦ NHÂN QUAY LẠI BÀN
+                if (studyPhase === 'PAUSED_AFK') {
+                  setStudyPhase('FOCUS');
+                  const returnMsg = "Chào mừng Chủ nhân quay lại! Tự động tiếp tục đồng hồ!";
+                  setAiResponseText(returnMsg);
+                  speakVietnamese(returnMsg);
+                  addLog('success', '▶️ [AI Agent] Chủ Nhân đã quay lại! Tiếp tục FOCUS.');
                 }
-                return nextVal;
-              });
-
-              // Khi người dùng QUAY LẠI BÀN (PIR motion == 1) ➔ Chào mừng trở lại & Tiếp tục học!
-              if (motionState === 1) {
-                setStudyPhase('FOCUS');
-                const returnMsg = "Chào mừng bro đã quay lại bàn! Tự động tiếp tục đếm ngược bài học!";
-                setAiResponseText(returnMsg);
-                speakVietnamese(returnMsg);
-                addLog('success', '▶️ [AI Agent] Phát hiện người dùng quay lại bàn! Tiếp tục FOCUS.');
                 setAbsenceSeconds(0);
               }
 
             } else if (studyPhase === 'READY_FOR_BREAK') {
               setAbsenceSeconds(0);
-
             } else if (studyPhase === 'BREAK') {
               // --- PHA 2: BREAK / NGHỈ XẢ HƠI ---
               setBreakTimer(prev => {
@@ -592,15 +647,28 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
             }
           }
 
-          // 3. Security Mode supervision
-          if (activeMode === 'SECURITY') {
-            if (motionState === 1) {
-              if (!alarmTriggered) {
+          // 3. Security Mode & Anti-Theft supervision
+          if (activeMode === 'SECURITY' || antiTheftMode) {
+            const isOwner = currentFaceLabelRef.current === 'Chủ Nhân';
+            if (motionState === 1 && !isOwner) {
+              if (!alarmTriggered && !isAlarmingRef.current) {
+                isAlarmingRef.current = true;
                 setAlarmTriggered(true);
-                const secMsg = "Cảnh báo khẩn cấp! Phát hiện chuyển động lạ ở bàn làm việc!";
+                const secMsg = "Cảnh báo khẩn cấp! Phát hiện người lạ ở bàn làm việc!";
                 setAiResponseText(secMsg);
                 speakVietnamese(secMsg);
                 addLog('error', '🚨 CẢNH BÁO CHỐNG TRỘM: Phát hiện kẻ lạ xâm nhập bàn làm việc!');
+              }
+            } else if (motionState === 1 && isOwner) {
+              if (isAlarmingRef.current || alarmTriggered) {
+                isAlarmingRef.current = false;
+                setAlarmTriggered(false);
+                setAntiTheftMode(false);
+                if (activeMode === 'SECURITY') switchMode('NORMAL');
+                const offMsg = "Đã xác nhận Chủ nhân. Tắt chế độ báo động.";
+                setAiResponseText(offMsg);
+                speakVietnamese(offMsg);
+                addLog('success', '✅ [AI Agent] Đã tắt báo động. Welcome back!');
               }
             }
           }
@@ -622,6 +690,10 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
         if (connectionMode !== 'simulated') return;
 
         const interval = setInterval(() => {
+          const noiseTemp = (Math.random() - 0.5) * 0.4;
+          const newT = +(Math.max(15, Math.min(45, simTemp + noiseTemp))).toFixed(1);
+          setTemperature(newT);
+
           const noiseHum = (Math.random() - 0.5) * 0.8;
           const newH = +(Math.max(30, Math.min(90, humidity + noiseHum))).toFixed(1);
           setHumidity(newH);
@@ -632,6 +704,245 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
 
         return () => clearInterval(interval);
       }, [connectionMode, simTemp, simMotion]);
+
+      // --- FACE DB MANAGEMENT ---
+      const registerFace = async () => {
+        if (!window.faceapi || !videoRef.current || !canvasRef.current) return;
+        setIsRegistering(true);
+        addLog('info', `📸 Đang quét khuôn mặt cho: ${faceNameInput}... Giữ nguyên vị trí!`);
+        
+        try {
+          const video = videoRef.current;
+          const options = new window.faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 });
+          const detections = await window.faceapi.detectSingleFace(video, options).withFaceLandmarks().withFaceDescriptor();
+          
+          if (!detections) {
+            addLog('error', '❌ Không tìm thấy khuôn mặt nào! Vui lòng nhìn thẳng vào Camera.');
+            setIsRegistering(false);
+            return;
+          }
+
+          const descriptorArray = Array.from(detections.descriptor);
+          const newLabel = {
+            label: faceNameInput || 'Chủ Nhân',
+            descriptors: [descriptorArray] // Save as standard array
+          };
+
+          const saved = localStorage.getItem('smartDeskFaceDB');
+          let db = saved ? JSON.parse(saved) : [];
+          
+          // Check if person exists, if so add another descriptor for better accuracy, else push new
+          const existing = db.find(d => d.label === newLabel.label);
+          if (existing) {
+            existing.descriptors.push(descriptorArray);
+          } else {
+            db.push(newLabel);
+          }
+
+          localStorage.setItem('smartDeskFaceDB', JSON.stringify(db));
+          setFaceDBSize(db.length);
+          setFaceDBList(db.map(item => item.label));
+          addLog('success', `✅ Đã lưu thành công dữ liệu khuôn mặt: ${newLabel.label}`);
+          setFaceNameInput(''); // reset
+        } catch (e) {
+          console.error("Lỗi đăng ký khuôn mặt:", e);
+          addLog('error', '❌ Quá trình lưu khuôn mặt thất bại.');
+        }
+        setIsRegistering(false);
+      };
+
+      const clearFaceDB = () => {
+        localStorage.removeItem('smartDeskFaceDB');
+        setFaceDBSize(0);
+        setFaceDBList([]);
+        addLog('success', '🗑️ Đã xoá toàn bộ Dữ liệu Sinh Trắc Học!');
+      };
+
+      const deleteFace = (labelToDelete) => {
+        const saved = localStorage.getItem('smartDeskFaceDB');
+        if (!saved) return;
+        try {
+          let db = JSON.parse(saved);
+          db = db.filter(d => d.label !== labelToDelete);
+          localStorage.setItem('smartDeskFaceDB', JSON.stringify(db));
+          setFaceDBSize(db.length);
+          setFaceDBList(db.map(item => item.label));
+          addLog('success', `🗑️ Đã xoá khuôn mặt: ${labelToDelete}`);
+        } catch (e) {
+          console.error("Lỗi xóa khuôn mặt:", e);
+        }
+      };
+
+      // --- WEBCAM MOTION DETECTION (PIR REPLACEMENT) ---
+      useEffect(() => {
+        if (!useWebcamPIR) {
+          // Stop webcam if running
+          if (videoRef.current && videoRef.current.srcObject) {
+            const tracks = videoRef.current.srcObject.getTracks();
+            tracks.forEach(track => track.stop());
+            videoRef.current.srcObject = null;
+          }
+          if (webcamIntervalRef.current) {
+            clearInterval(webcamIntervalRef.current);
+          }
+          // Restore manual simulation motion if disabled
+          if (connectionMode === 'simulated') {
+             setMotionState(simMotion);
+          }
+          return;
+        }
+
+        // Start Webcam
+        const startWebcam = async () => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              videoRef.current.play();
+            }
+
+            addLog('success', '📷 Bật Webcam thành công! Đang kích hoạt Core Vision...');
+            lastWebcamMotionTimeRef.current = Date.now(); // Initialize
+
+            // Khởi tạo AI Face Detection (Face-API)
+            const initAI = async () => {
+              try {
+                addLog('info', '⏳ AI Vision: Đang tải mô hình Sinh Trắc Học (FaceID)...');
+                if (!window.faceapi) throw new Error("Face-API library not found in window");
+                
+                const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+                await window.faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await window.faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                await window.faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                
+                addLog('success', '🧠 AI Vision: Đã tải xong Core Model FaceID!');
+                
+                // Hàm load danh sách khuôn mặt từ LocalStorage
+                const loadFaceMatcher = () => {
+                  const saved = localStorage.getItem('smartDeskFaceDB');
+                  if (!saved) return null;
+                  try {
+                    const parsed = JSON.parse(saved);
+                    if (!parsed || parsed.length === 0) return null;
+                    const labeledDescriptors = parsed.map(lbl => {
+                      // Handle both standard arrays and legacy object formats
+                      const descArrays = lbl.descriptors.map(d => {
+                        return new Float32Array(Array.isArray(d) ? d : Object.values(d));
+                      });
+                      return new window.faceapi.LabeledFaceDescriptors(lbl.label, descArrays);
+                    });
+                    return new window.faceapi.FaceMatcher(labeledDescriptors, 0.6); // Ngưỡng 0.6
+                  } catch (e) {
+                    console.error("Lỗi parse FaceDB:", e);
+                    return null;
+                  }
+                };
+
+                // Vòng lặp nhận diện
+                webcamIntervalRef.current = setInterval(async () => {
+                  if (!videoRef.current || !canvasRef.current) return;
+                  
+                  const video = videoRef.current;
+                  const canvas = canvasRef.current;
+                  const ctx = canvas.getContext('2d');
+                  
+                  if (video.readyState !== 4) return;
+                  
+                  // Đồng bộ kích thước canvas với kích thước thực tế của stream
+                  const displaySize = { width: video.videoWidth || 320, height: video.videoHeight || 240 };
+                  window.faceapi.matchDimensions(canvas, displaySize);
+                  
+                  try {
+                    // Trích xuất khuôn mặt, điểm neo và vector đặc trưng
+                    const options = new window.faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 });
+                    const detections = await window.faceapi.detectAllFaces(video, options).withFaceLandmarks().withFaceDescriptors();
+                    const resizedDetections = window.faceapi.resizeResults(detections, displaySize);
+                    
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    const faceMatcher = loadFaceMatcher();
+                    let tempLabel = 'NONE';
+                    
+                    if (resizedDetections.length > 0) {
+                      lastWebcamMotionTimeRef.current = Date.now();
+                      
+                      let hasOwner = false;
+                      let otherMember = '';
+                      
+                      resizedDetections.forEach(detection => {
+                        const box = detection.detection.box;
+                        let labelText = "KHÁCH LẠ (Guest)";
+                        let boxColor = '#fbbf24'; // amber-400
+                        
+                        if (faceMatcher) {
+                          const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+                          if (bestMatch.label !== 'unknown') {
+                            labelText = bestMatch.label;
+                            boxColor = '#10b981'; // emerald-500
+                            if (labelText === 'Chủ Nhân') hasOwner = true;
+                            else otherMember = labelText;
+                          }
+                        }
+
+                        // Vẽ Box
+                        ctx.strokeStyle = boxColor;
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(box.x, box.y, box.width, box.height);
+                        
+                        // Vẽ text label
+                        ctx.fillStyle = boxColor;
+                        ctx.font = 'bold 12px "JetBrains Mono", monospace';
+                        ctx.fillText(`👤 ${labelText}`, box.x, box.y > 15 ? box.y - 5 : 15);
+                      });
+
+                      if (hasOwner) tempLabel = 'Chủ Nhân';
+                      else if (otherMember) tempLabel = otherMember;
+                      else tempLabel = 'KHÁCH LẠ (Guest)';
+                    }
+                    currentFaceLabelRef.current = tempLabel;
+
+                    // Logic Trạng thái: Chỉ cần vắng mặt > 2 giây là set 0
+                    const isMotionNow = Date.now() - lastWebcamMotionTimeRef.current < 2000;
+                    setMotionState(prev => {
+                      if (prev !== (isMotionNow ? 1 : 0)) {
+                        if (isMotionNow) {
+                          addLog('info', '👁️ AI Vision: Trực quan - Đã xác định có người ở bàn.');
+                        } else {
+                          addLog('info', '👁️ AI Vision: Trực quan - Đã mất dấu (Không thấy người).');
+                        }
+                      }
+                      return isMotionNow ? 1 : 0;
+                    });
+
+                  } catch (e) {
+                    console.error("Lỗi nhận diện khuôn mặt:", e);
+                  }
+                }, 300); // Quét 300ms/lần cho thuật toán nặng
+              } catch (e) {
+                addLog('error', '❌ AI Vision: Lỗi tải mô hình FaceID.');
+                console.error(e);
+              }
+            };
+            
+            initAI();
+
+          } catch (err) {
+            console.error("Lỗi Webcam:", err);
+            addLog('error', '❌ Không thể truy cập Webcam. Vui lòng cấp quyền.');
+            setUseWebcamPIR(false);
+          }
+        };
+
+        startWebcam();
+
+        return () => {
+          if (videoRef.current && videoRef.current.srcObject) {
+            const tracks = videoRef.current.srcObject.getTracks();
+            tracks.forEach(track => track.stop());
+          }
+          if (webcamIntervalRef.current) clearInterval(webcamIntervalRef.current);
+        };
+      }, [useWebcamPIR]);
 
       // Auto-scroll terminal log
       useEffect(() => {
@@ -1302,29 +1613,58 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
               </div>
             </div>
 
-            {/* PIR DESK PRESENCE CARD */}
+            {/* AI CAMERA VISION CARD */}
             <div className="rounded-3xl bg-zinc-900/90 border border-zinc-800 p-6 shadow-xl relative overflow-hidden flex flex-col justify-between sm:col-span-2 lg:col-span-1">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 z-10">
                 <div className="flex items-center space-x-2">
                   <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                    <IconCpu className="w-6 h-6" />
+                    <IconSparkles className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-white">Hiện Diện Ở Bàn (PIR)</h3>
-                    <p className="text-xs text-zinc-400">HC-SR501 Sensor (D2)</p>
+                    <h3 className="text-sm font-semibold text-white">AI Camera Vision</h3>
+                    <p className="text-xs text-zinc-400">Computer Vision Tracking</p>
                   </div>
                 </div>
               </div>
 
-              <div>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium border inline-block mb-2 ${
-                  motionState === 1 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-400 bg-amber-500/10 border-amber-500/30'
-                }`}>
-                  {motionState === 1 ? '● Đang Ngồi Làm Việc' : '○ Vắng Mặt Khỏi Bàn'}
-                </span>
-                <div className="text-2xl font-bold font-mono text-white my-1">
-                  {motionState === 1 ? 'ĐANG Ở BÀN' : 'RỜI KHỎI BÀN'}
+              <div className="z-10 relative">
+                <div className="relative overflow-hidden rounded-xl border border-zinc-800 mb-3 aspect-video">
+                  <video ref={videoRef} className="w-full h-full object-cover opacity-80 filter grayscale" width="320" height="240" autoPlay playsInline muted></video>
+                  <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                  
+                  <div className="absolute top-2 right-2 flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-black/70 border border-white/10 backdrop-blur-md">
+                    {motionState === 1 ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span className="text-[10px] font-bold text-emerald-400">DETECTED</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                        <span className="text-[10px] font-bold text-rose-400">NO MOTION</span>
+                      </>
+                    )}
+                  </div>
                 </div>
+
+                <div className="flex items-center justify-between mb-4">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium border inline-block ${
+                    motionState === 1 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+                  }`}>
+                    {motionState === 1 ? '● Đang Ngồi Làm Việc' : '○ Vắng Mặt Khỏi Bàn'}
+                  </span>
+                  
+                  <button 
+                    onClick={() => setAntiTheftMode(!antiTheftMode)}
+                    className={`text-xs px-3 py-1 rounded-md font-bold transition-all ${
+                      antiTheftMode ? 'bg-rose-600 text-white animate-pulse shadow-[0_0_15px_rgba(225,29,72,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    {antiTheftMode ? '🚨 ĐANG BẬT CHỐNG TRỘM' : 'Khóa Chống Trộm'}
+                  </button>
+                </div>
+
+
               </div>
             </div>
 
@@ -1337,6 +1677,7 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
                 {[
                   { id: 'overview', label: 'Tổng Quan & Giả Lập Cảm Biến' },
                   { id: 'chart', label: 'Đồ Thị Môi Trường' },
+                  { id: 'faceAuth', label: 'Bảo Mật Sinh Trắc (FaceDB)' },
                   { id: 'logs', label: 'Terminal Serial JSON Logs' },
                   { id: 'wiring', label: 'Sơ Đồ Cắm Dây ESP8266' }
                 ].map(tab => (
@@ -1389,18 +1730,7 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
                       />
                     </div>
 
-                    <div className="flex items-center justify-between pt-2">
-                      <span className="text-xs text-zinc-400">Giả lập Cảm Biến PIR (Hiện diện ở bàn):</span>
-                      <button
-                        onClick={() => handleToggleSimMotion(simMotion === 1 ? 0 : 1)}
-                        disabled={connectionMode === 'web_serial'}
-                        className={`px-3 py-1.5 text-xs font-mono font-bold rounded-xl border transition-all btn-tactile ${
-                          simMotion === 1 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        }`}
-                      >
-                        {simMotion === 1 ? '● Đang ở bàn' : '○ Đã rời bàn'}
-                      </button>
-                    </div>
+
                   </div>
 
                   {connectionMode === 'web_serial' && (
@@ -1447,6 +1777,145 @@ Yêu cầu: Trả lời ngắn gọn dưới 3 câu, phong cách thân thiện, 
                   </div>
                 </div>
 
+              </div>
+            )}
+
+            {/* TAB CONTENT 1.5: FACE AUTH */}
+            {activeTab === 'faceAuth' && (
+              <div className="space-y-4">
+                {!isFaceAdminAuthenticated ? (
+                  <div className="p-8 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 flex flex-col items-center justify-center space-y-4 max-w-md mx-auto mt-6 shadow-2xl">
+                    <div className="w-16 h-16 rounded-full bg-rose-500/10 flex items-center justify-center border border-rose-500/20 text-rose-400 mb-2">
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    </div>
+                    <h3 className="text-lg font-bold text-white text-center">Xác Thực Bảo Mật</h3>
+                    <p className="text-xs text-zinc-400 text-center px-4">Khu vực quản lý Dữ Liệu Sinh Trắc Học (FaceDB) yêu cầu xác thực để truy cập. Vui lòng nhập mã PIN (Mặc định: 123456).</p>
+                    
+                    <div className="w-full space-y-3 pt-4">
+                      <input 
+                        type="password" 
+                        value={pinInput}
+                        onChange={(e) => setPinInput(e.target.value)}
+                        placeholder="Nhập mã PIN..."
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            if (pinInput === '123456') {
+                              setIsFaceAdminAuthenticated(true);
+                              setPinInput('');
+                              addLog('success', '🔓 Đăng nhập quản trị FaceDB thành công.');
+                            } else {
+                              addLog('error', '❌ Mã PIN không chính xác!');
+                              setPinInput('');
+                            }
+                          }
+                        }}
+                      />
+                      <button 
+                        onClick={() => {
+                          if (pinInput === '123456') {
+                            setIsFaceAdminAuthenticated(true);
+                            setPinInput('');
+                            addLog('success', '🔓 Đăng nhập quản trị FaceDB thành công.');
+                          } else {
+                            addLog('error', '❌ Mã PIN không chính xác!');
+                            setPinInput('');
+                          }
+                        }}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-indigo-500/20"
+                      >
+                        Mở Khóa FaceDB
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-white flex items-center space-x-2">
+                          <span className="text-emerald-400">🛡️</span>
+                          <span>Bảng Điều Khiển Sinh Trắc Học</span>
+                        </h3>
+                        <p className="text-xs text-zinc-400 mt-1">Quản lý nhận diện khuôn mặt, cấp quyền truy cập Bàn Học Thông Minh.</p>
+                      </div>
+                      <button 
+                        onClick={() => setIsFaceAdminAuthenticated(false)}
+                        className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors border border-zinc-700"
+                      >
+                        Đăng Xuất
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Thêm mới */}
+                      <div className="p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 space-y-4">
+                        <h4 className="text-sm font-semibold text-white flex items-center space-x-2">
+                          <span className="text-indigo-400">👤</span>
+                          <span>Đăng Ký Khuôn Mặt Mới</span>
+                        </h4>
+                        <p className="text-xs text-zinc-400">Đảm bảo người cần đăng ký đang ngồi trước Camera và Camera không bị che khuất.</p>
+                        
+                        <div className="flex flex-col space-y-3 pt-2">
+                          <input 
+                            type="text" 
+                            value={faceNameInput} 
+                            onChange={e => setFaceNameInput(e.target.value)} 
+                            placeholder="Nhập tên người dùng..."
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+                          />
+                          <button 
+                            onClick={registerFace}
+                            disabled={isRegistering || !faceNameInput}
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl disabled:opacity-50 transition-colors shadow-lg shadow-indigo-500/20 flex items-center justify-center space-x-2"
+                          >
+                            <span>{isRegistering ? 'Đang Quét Dữ Liệu Sinh Trắc...' : '+ Bắt Đầu Quét Khuôn Mặt'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Danh sách */}
+                      <div className="p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 flex flex-col">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="text-sm font-semibold text-white flex items-center space-x-2">
+                            <span className="text-emerald-400">📋</span>
+                            <span>Danh Sách Đã Cấp Quyền ({faceDBSize})</span>
+                          </h4>
+                          {faceDBSize > 0 && (
+                            <button onClick={clearFaceDB} className="text-xs font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 px-3 py-1 rounded-lg">Xóa Toàn Bộ</button>
+                          )}
+                        </div>
+
+                        <div className="flex-1 bg-zinc-900 rounded-xl border border-zinc-800 p-2 overflow-y-auto max-h-48 custom-scrollbar">
+                          {faceDBList.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-xs text-zinc-500 italic">
+                              Chưa có dữ liệu nào.
+                            </div>
+                          ) : (
+                            <ul className="space-y-1">
+                              {faceDBList.map((name, idx) => (
+                                <li key={idx} className="flex items-center justify-between p-2 hover:bg-zinc-800/50 rounded-lg transition-colors group">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-sm font-bold text-zinc-400 border border-zinc-700">
+                                      {name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <span className="text-sm text-zinc-200 font-medium">{name}</span>
+                                  </div>
+                                  <button 
+                                    onClick={() => deleteFace(name)}
+                                    className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                                    title="Xóa khuôn mặt này"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
